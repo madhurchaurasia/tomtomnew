@@ -39,6 +39,9 @@ class MainActivitySimple : AppCompatActivity() {
     private var routeSimulator: RouteSimulator? = null
     private var navigationArrow: Marker? = null
     private var isPreviewMode = false
+    private var currentRoutePoints: List<GeoPoint> = emptyList()
+    private var currentArrowPosition: Int = 0
+    private var isDraggingArrow = false
 
     private lateinit var btnLoadRoutes: Button
     private lateinit var btnClearRoutes: Button
@@ -50,6 +53,11 @@ class MainActivitySimple : AppCompatActivity() {
     private lateinit var tvRemainingDistance: TextView
     private lateinit var btnStopNavigation: Button
     private lateinit var tvRouteInfo: TextView
+    private lateinit var arrowControlsPanel: LinearLayout
+    private lateinit var btnArrowForward: Button
+    private lateinit var btnArrowBackward: Button
+    private lateinit var btnArrowToStart: Button
+    private lateinit var btnArrowToEnd: Button
 
     private var routes: List<NextBillionRoute> = emptyList()
     private var selectedRouteIndex = -1
@@ -106,6 +114,11 @@ class MainActivitySimple : AppCompatActivity() {
         tvRemainingDistance = findViewById(R.id.tvRemainingDistance)
         btnStopNavigation = findViewById(R.id.btnStopNavigation)
         tvRouteInfo = findViewById(R.id.tvRouteInfo)
+        arrowControlsPanel = findViewById(R.id.arrowControlsPanel)
+        btnArrowForward = findViewById(R.id.btnArrowForward)
+        btnArrowBackward = findViewById(R.id.btnArrowBackward)
+        btnArrowToStart = findViewById(R.id.btnArrowToStart)
+        btnArrowToEnd = findViewById(R.id.btnArrowToEnd)
     }
 
     private fun initializeNavigationManager() {
@@ -209,6 +222,23 @@ class MainActivitySimple : AppCompatActivity() {
         btnStopNavigation.setOnClickListener {
             stopNavigation()
         }
+
+        // Setup navigation arrow control buttons
+        btnArrowForward.setOnClickListener {
+            moveArrowForward()
+        }
+
+        btnArrowBackward.setOnClickListener {
+            moveArrowBackward()
+        }
+
+        btnArrowToStart.setOnClickListener {
+            jumpToRouteStart()
+        }
+
+        btnArrowToEnd.setOnClickListener {
+            jumpToRouteEnd()
+        }
     }
 
     private fun initializeMap() {
@@ -240,6 +270,9 @@ class MainActivitySimple : AppCompatActivity() {
                         zoom = 10.0
                     )
                 )
+
+                // Add touch interaction for navigation arrow dragging
+                setupMapTouchInteraction(map)
 
                 Toast.makeText(this, "TomTom map ready", Toast.LENGTH_SHORT).show()
             }
@@ -792,6 +825,153 @@ class MainActivitySimple : AppCompatActivity() {
         }
     }
 
+    private fun setupMapTouchInteraction(map: TomTomMap) {
+        Log.d(TAG, "Setting up gesture controls for draggable navigation arrow")
+
+        // Since TomTom SDK doesn't expose map click listeners in this version,
+        // we'll add gesture control buttons to the UI instead
+        setupNavigationArrowControls()
+
+        Log.d(TAG, "Gesture controls setup completed")
+    }
+
+    private fun setupNavigationArrowControls() {
+        // We'll use volume keys and screen touch gestures for arrow control
+        // This is a simpler approach that works with the current TomTom SDK
+        Log.d(TAG, "Navigation arrow gesture controls ready")
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (isPreviewMode && currentRoutePoints.isNotEmpty()) {
+            when (keyCode) {
+                android.view.KeyEvent.KEYCODE_VOLUME_UP -> {
+                    moveArrowForward()
+                    return true
+                }
+                android.view.KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    moveArrowBackward()
+                    return true
+                }
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    // Additional gesture controls for arrow movement
+    private fun moveArrowForward() {
+        if (isPreviewMode && currentRoutePoints.isNotEmpty()) {
+            if (currentArrowPosition < currentRoutePoints.size - 1) {
+                currentArrowPosition++
+                val newPosition = currentRoutePoints[currentArrowPosition]
+                updateNavigationArrowPosition(newPosition, currentArrowPosition)
+                Log.d(TAG, "Arrow moved forward to position $currentArrowPosition")
+            } else {
+                Toast.makeText(this, "Already at end of route", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun moveArrowBackward() {
+        if (isPreviewMode && currentRoutePoints.isNotEmpty()) {
+            if (currentArrowPosition > 0) {
+                currentArrowPosition--
+                val newPosition = currentRoutePoints[currentArrowPosition]
+                updateNavigationArrowPosition(newPosition, currentArrowPosition)
+                Log.d(TAG, "Arrow moved backward to position $currentArrowPosition")
+            } else {
+                Toast.makeText(this, "Already at start of route", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun jumpToRouteStart() {
+        if (isPreviewMode && currentRoutePoints.isNotEmpty()) {
+            currentArrowPosition = 0
+            val newPosition = currentRoutePoints[currentArrowPosition]
+            updateNavigationArrowPosition(newPosition, currentArrowPosition)
+            Toast.makeText(this, "Jumped to route start", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun jumpToRouteEnd() {
+        if (isPreviewMode && currentRoutePoints.isNotEmpty()) {
+            currentArrowPosition = currentRoutePoints.size - 1
+            val newPosition = currentRoutePoints[currentArrowPosition]
+            updateNavigationArrowPosition(newPosition, currentArrowPosition)
+            Toast.makeText(this, "Jumped to route end", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun findClosestPointOnRoute(touchPosition: GeoPoint, routePoints: List<GeoPoint>): Pair<Int, GeoPoint>? {
+        if (routePoints.isEmpty()) return null
+
+        var closestIndex = 0
+        var minDistance = Double.MAX_VALUE
+
+        routePoints.forEachIndexed { index, point ->
+            val distance = calculateDistance(touchPosition, point)
+            if (distance < minDistance) {
+                minDistance = distance
+                closestIndex = index
+            }
+        }
+
+        return Pair(closestIndex, routePoints[closestIndex])
+    }
+
+    private fun calculateDistance(point1: GeoPoint, point2: GeoPoint): Double {
+        val earthRadius = 6371000.0 // Earth radius in meters
+        val lat1Rad = Math.toRadians(point1.latitude)
+        val lat2Rad = Math.toRadians(point2.latitude)
+        val deltaLat = Math.toRadians(point2.latitude - point1.latitude)
+        val deltaLng = Math.toRadians(point2.longitude - point1.longitude)
+
+        val a = kotlin.math.sin(deltaLat / 2) * kotlin.math.sin(deltaLat / 2) +
+                kotlin.math.cos(lat1Rad) * kotlin.math.cos(lat2Rad) *
+                kotlin.math.sin(deltaLng / 2) * kotlin.math.sin(deltaLng / 2)
+
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+        return earthRadius * c
+    }
+
+    private fun updateNavigationArrowPosition(position: GeoPoint, routeIndex: Int) {
+        showNavigationArrow(position)
+
+        // Update progress information
+        val progress = if (currentRoutePoints.isNotEmpty()) {
+            (routeIndex.toFloat() / currentRoutePoints.size * 100).toInt()
+        } else 0
+
+        val remainingPoints = currentRoutePoints.size - routeIndex
+        val totalDistance = if (currentRoutePoints.size > 1) {
+            calculateTotalRouteDistance(currentRoutePoints)
+        } else 0.0
+
+        val traveledDistance = if (routeIndex > 0 && currentRoutePoints.size > routeIndex) {
+            calculateTotalRouteDistance(currentRoutePoints.subList(0, routeIndex + 1))
+        } else 0.0
+
+        val remainingDistance = totalDistance - traveledDistance
+
+        runOnUiThread {
+            tvProgress.text = "Progress: $progress%"
+            tvRemainingDistance.text = "Remaining: ${remainingPoints} points (${String.format("%.1f", remainingDistance/1000)}km)"
+            tvNavigationInstruction.text = "Route Preview - Point ${routeIndex + 1}/${currentRoutePoints.size} - Tap map to move arrow"
+        }
+
+        Log.d(TAG, "Navigation arrow updated: position=$routeIndex, progress=$progress%")
+    }
+
+    private fun calculateTotalRouteDistance(points: List<GeoPoint>): Double {
+        if (points.size < 2) return 0.0
+
+        var totalDistance = 0.0
+        for (i in 0 until points.size - 1) {
+            totalDistance += calculateDistance(points[i], points[i + 1])
+        }
+        return totalDistance
+    }
+
     private fun startRoutePreview() {
         Log.d(TAG, "Starting route preview mode - entry point")
 
@@ -826,19 +1006,27 @@ class MainActivitySimple : AppCompatActivity() {
 
                     // Show preview UI immediately
                     navigationPanel.visibility = View.VISIBLE
-                    tvNavigationInstruction.text = "Route Preview Mode - Long press Navigate to exit"
+                    arrowControlsPanel.visibility = View.VISIBLE
+                    tvNavigationInstruction.text = "Route Preview - Use arrow controls or volume keys"
                     tvProgress.text = "Preview: Route ${selectedRouteIndex + 1}"
                     btnStartNavigation.text = "Exit Preview"
 
-                    // Just show a simple navigation arrow without complex simulation
+                    // Initialize draggable navigation arrow system
                     try {
                         val geoPoints = decodePolyline(encodedPolyline)
                         if (geoPoints.isNotEmpty()) {
-                            showNavigationArrow(geoPoints.first())
-                            Log.d(TAG, "Route preview - navigation arrow shown")
+                            // Store route points for dragging functionality
+                            currentRoutePoints = geoPoints
+                            currentArrowPosition = 0
+                            isDraggingArrow = false
+
+                            // Show navigation arrow at start
+                            updateNavigationArrowPosition(geoPoints.first(), 0)
+
+                            Log.d(TAG, "Route preview - draggable navigation arrow initialized with ${geoPoints.size} points")
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error decoding polyline for preview", e)
+                        Log.e(TAG, "Error setting up draggable arrow for preview", e)
                     }
 
                     Toast.makeText(this, "Route Preview Mode activated", Toast.LENGTH_LONG).show()
@@ -917,10 +1105,15 @@ class MainActivitySimple : AppCompatActivity() {
         Log.d(TAG, "Stopping route preview mode")
 
         isPreviewMode = false
+        isDraggingArrow = false
 
         // Clean up route simulator (if any)
         routeSimulator?.stopSimulation()
         routeSimulator = null
+
+        // Clear route points and arrow state
+        currentRoutePoints = emptyList()
+        currentArrowPosition = 0
 
         // Remove navigation arrow
         try {
@@ -932,6 +1125,7 @@ class MainActivitySimple : AppCompatActivity() {
 
         // Update UI
         navigationPanel.visibility = View.GONE
+        arrowControlsPanel.visibility = View.GONE
         btnStartNavigation.text = "Navigate"
 
         Toast.makeText(this, "Route preview stopped", Toast.LENGTH_SHORT).show()

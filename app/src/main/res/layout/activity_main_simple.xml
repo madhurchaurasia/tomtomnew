@@ -140,6 +140,56 @@
             android:textAlignment="center"
             android:textSize="16sp" />
 
+        <!-- Navigation Arrow Controls (initially hidden) -->
+        <LinearLayout
+            android:id="@+id/arrowControlsPanel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp"
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:padding="8dp"
+            android:elevation="4dp"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/btnArrowForward"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="▲"
+                android:textSize="16sp"
+                android:backgroundTint="@color/design_default_color_primary" />
+
+            <Button
+                android:id="@+id/btnArrowBackward"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="4dp"
+                android:text="▼"
+                android:textSize="16sp"
+                android:backgroundTint="@color/design_default_color_primary" />
+
+            <Button
+                android:id="@+id/btnArrowToStart"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="4dp"
+                android:text="⏮"
+                android:textSize="12sp"
+                android:backgroundTint="@color/design_default_color_secondary" />
+
+            <Button
+                android:id="@+id/btnArrowToEnd"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_marginTop="4dp"
+                android:text="⏭"
+                android:textSize="12sp"
+                android:backgroundTint="@color/design_default_color_secondary" />
+
+        </LinearLayout>
+
     </FrameLayout>
 
     <!-- Route info panel -->
