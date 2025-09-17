@@ -55,9 +55,13 @@
         <Spinner
             android:id="@+id/spinnerRoutes"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="48dp"
             android:layout_weight="1"
-            android:layout_marginStart="8dp" />
+            android:layout_marginStart="8dp"
+            android:background="@android:drawable/btn_dropdown"
+            android:padding="12dp"
+            android:textColor="@android:color/black"
+            android:textSize="16sp" />
 
         <Button
             android:id="@+id/btnStartNavigation"

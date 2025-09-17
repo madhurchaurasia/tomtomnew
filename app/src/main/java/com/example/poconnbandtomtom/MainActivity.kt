@@ -34,6 +34,9 @@ import com.tomtom.sdk.map.display.style.StyleMode
 import com.tomtom.sdk.map.display.image.ImageFactory
 import com.tomtom.sdk.location.DefaultLocationProviderFactory
 import com.example.poconnbandtomtom.navigation.NavigationManager
+import com.example.poconnbandtomtom.navigation.RouteSimulator
+import com.example.poconnbandtomtom.utils.PolylineDecoder
+import com.example.poconnbandtomtom.utils.Config
 import kotlinx.coroutines.launch
 import java.io.InputStreamReader
 
@@ -42,7 +45,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var mapFragment: MapFragment
     private var tomTomMap: TomTomMap? = null
-    private var currentRoutePolyline: Polyline? = null
+    private val routePolylines = mutableMapOf<Int, Polyline>()
     private val routeMarkers = mutableListOf<Marker>()
 
     private var routes: List<NextBillionRoute> = emptyList()
@@ -50,6 +53,9 @@ class MainActivity : AppCompatActivity() {
 
     // Navigation Manager
     private lateinit var navigationManager: NavigationManager
+    
+    // Route Simulator for preview navigation
+    private var routeSimulator: RouteSimulator? = null
 
     companion object {
         private const val LOCATION_PERMISSION_REQUEST_CODE = 1001
@@ -138,6 +144,13 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                // Initialize route simulator
+                routeSimulator = RouteSimulator(this@MainActivity, map)
+                setupRouteSimulatorCallbacks()
+                
+                // Add map click listener for navigation marker positioning
+                setupMapTouchHandling(map)
+                
                 Log.d(TAG, "TomTom map initialized successfully")
                 Toast.makeText(this, "TomTom map ready", Toast.LENGTH_SHORT).show()
             }
@@ -220,6 +233,8 @@ class MainActivity : AppCompatActivity() {
                 if (position >= 0 && position < routes.size) {
                     selectedRouteIndex = position
                     showRouteInfo(routes[position])
+                    // Re-render all routes with updated highlighting
+                    renderAllRoutes()
                 }
             }
 
@@ -235,6 +250,12 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnStopNavigation.setOnClickListener {
             stopNavigation()
+        }
+        
+        // Add route preview button (long press on Navigate)
+        binding.btnStartNavigation.setOnLongClickListener {
+            startRoutePreview()
+            true
         }
     }
 
@@ -252,9 +273,12 @@ class MainActivity : AppCompatActivity() {
                 "Route ${index + 1}: ${route.vehicle}"
             }
 
-            val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, routeNames)
-            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            val adapter = ArrayAdapter(this, R.layout.spinner_item, routeNames)
+            adapter.setDropDownViewResource(R.layout.spinner_dropdown_item)
             binding.spinnerRoutes.adapter = adapter
+
+            // Automatically render all routes on the map
+            renderAllRoutes()
 
             Toast.makeText(this, "Loaded ${routes.size} routes", Toast.LENGTH_SHORT).show()
 
@@ -264,10 +288,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun clearRoutes() {
-        routes = emptyList()
-        selectedRouteIndex = -1
-        binding.spinnerRoutes.adapter = null
-        binding.tvRouteInfo.text = "Routes cleared"
+        clearAllRoutes()
         binding.navigationPanel.visibility = View.GONE
     }
 
@@ -386,10 +407,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Create TomTom route from GeoPoints and display on map
-     */
     private fun createTomTomRouteFromGeoPoints(geoPoints: List<GeoPoint>) {
+        // This function is deprecated - use renderAllRoutes() instead
+        renderAllRoutes()
+    }
+
+    private fun renderAllRoutes() {
         try {
             val map = tomTomMap ?: run {
                 Log.e(TAG, "TomTom map not initialized")
@@ -400,76 +423,112 @@ class MainActivity : AppCompatActivity() {
             // Clear existing route display
             clearMapRoute()
 
-            if (geoPoints.size < 2) {
-                Log.e(TAG, "Route must have at least 2 points")
+            if (routes.isEmpty()) {
+                Log.w(TAG, "No routes to display")
                 return
             }
 
-            // Create polyline for the route
-            val polylineOptions = PolylineOptions(
-                coordinates = geoPoints,
-                tag = "route"
-            )
-            currentRoutePolyline = map.addPolyline(polylineOptions)
+            var allGeoPoints = mutableListOf<GeoPoint>()
 
-            // Add markers for start and end points
-            val startPoint = geoPoints.first()
-            val endPoint = geoPoints.last()
+            // Render each route with different colors
+            routes.forEachIndexed { index, route ->
+                try {
+                    val geoPoints = PolylineDecoder.decodePolyline(route.geometry)
+                    
+                    if (geoPoints.size < 2) {
+                        Log.w(TAG, "Route $index has insufficient points (${geoPoints.size})")
+                        return@forEachIndexed
+                    }
 
-            // Start marker (green)
-            val startMarker = MarkerOptions(
-                coordinate = startPoint,
-                pinImage = ImageFactory.fromResource(R.drawable.ic_marker_start),
-                tag = "route_markers"
-            )
-            routeMarkers.add(map.addMarker(startMarker))
+                    // Get color for this route
+                    val color = Config.RouteColors.COLORS[index % Config.RouteColors.COLORS.size]
+                    val alpha = if (index == selectedRouteIndex) {
+                        Config.RouteColors.HIGHLIGHTED_ALPHA
+                    } else {
+                        Config.RouteColors.DIMMED_ALPHA
+                    }
 
-            // End marker (red)
-            val endMarker = MarkerOptions(
-                coordinate = endPoint,
-                pinImage = ImageFactory.fromResource(R.drawable.ic_marker_end),
-                tag = "route_markers"
-            )
-            routeMarkers.add(map.addMarker(endMarker))
+                    // Create polyline for this route
+                    val polylineOptions = PolylineOptions(
+                        coordinates = geoPoints,
+                        tag = "route"
+                    )
+                    
+                    val polyline = map.addPolyline(polylineOptions)
+                    routePolylines[index] = polyline
 
-            // Zoom to fit the route
-            val bounds = geoPoints.fold(
-                Pair(
-                    GeoPoint(90.0, 180.0),  // min
-                    GeoPoint(-90.0, -180.0)  // max
+                    // Add all geoPoints for bounds calculation
+                    allGeoPoints.addAll(geoPoints)
+
+                    // Add markers only for the selected route
+                    if (index == selectedRouteIndex) {
+                        val startPoint = geoPoints.first()
+                        val endPoint = geoPoints.last()
+
+                        // Start marker (green)
+                        val startMarker = MarkerOptions(
+                            coordinate = startPoint,
+                            pinImage = ImageFactory.fromResource(R.drawable.ic_marker_start),
+                            tag = "route_markers"
+                        )
+                        routeMarkers.add(map.addMarker(startMarker))
+
+                        // End marker (red)
+                        val endMarker = MarkerOptions(
+                            coordinate = endPoint,
+                            pinImage = ImageFactory.fromResource(R.drawable.ic_marker_end),
+                            tag = "route_markers"
+                        )
+                        routeMarkers.add(map.addMarker(endMarker))
+                    }
+
+                    Log.d(TAG, "Route $index displayed with ${geoPoints.size} points, color: ${color.toString(16)}")
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to decode/display route $index: ${e.message}")
+                }
+            }
+
+            // Zoom to fit all routes
+            if (allGeoPoints.isNotEmpty()) {
+                val bounds = allGeoPoints.fold(
+                    Pair(
+                        GeoPoint(90.0, 180.0),  // min
+                        GeoPoint(-90.0, -180.0)  // max
+                    )
+                ) { acc, point ->
+                    Pair(
+                        GeoPoint(
+                            minOf(acc.first.latitude, point.latitude),
+                            minOf(acc.first.longitude, point.longitude)
+                        ),
+                        GeoPoint(
+                            maxOf(acc.second.latitude, point.latitude),
+                            maxOf(acc.second.longitude, point.longitude)
+                        )
+                    )
+                }
+
+                // Move camera to show all routes
+                val center = GeoPoint(
+                    (bounds.first.latitude + bounds.second.latitude) / 2,
+                    (bounds.first.longitude + bounds.second.longitude) / 2
                 )
-            ) { acc, point ->
-                Pair(
-                    GeoPoint(
-                        minOf(acc.first.latitude, point.latitude),
-                        minOf(acc.first.longitude, point.longitude)
-                    ),
-                    GeoPoint(
-                        maxOf(acc.second.latitude, point.latitude),
-                        maxOf(acc.second.longitude, point.longitude)
+
+                map.moveCamera(
+                    CameraOptions(
+                        position = center,
+                        zoom = calculateZoomLevel(bounds)
                     )
                 )
             }
 
-            // Move camera to show the entire route
-            val center = GeoPoint(
-                (bounds.first.latitude + bounds.second.latitude) / 2,
-                (bounds.first.longitude + bounds.second.longitude) / 2
-            )
-
-            map.moveCamera(
-                CameraOptions(
-                    position = center,
-                    zoom = calculateZoomLevel(bounds)
-                )
-            )
-
-            Log.d(TAG, "Route displayed with ${geoPoints.size} points")
-            Toast.makeText(this, "Route displayed on map", Toast.LENGTH_SHORT).show()
+            Log.d(TAG, "All ${routes.size} routes displayed on map")
+            Toast.makeText(this, "All ${routes.size} routes displayed", Toast.LENGTH_SHORT).show()
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to display route on map", e)
-            Toast.makeText(this, "Failed to display route: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Failed to display routes on map", e)
+            Toast.makeText(this, "Failed to display routes: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -477,8 +536,16 @@ class MainActivity : AppCompatActivity() {
         // Clear all polylines and markers by tag
         tomTomMap?.removePolylines("route")
         tomTomMap?.removeMarkers("route_markers")
-        currentRoutePolyline = null
+        routePolylines.clear()
         routeMarkers.clear()
+    }
+
+    private fun clearAllRoutes() {
+        clearMapRoute()
+        routes = emptyList()
+        selectedRouteIndex = -1
+        binding.spinnerRoutes.adapter = null
+        binding.tvRouteInfo.text = "Select a route to see information"
     }
 
     private fun calculateZoomLevel(bounds: Pair<GeoPoint, GeoPoint>): Double {
@@ -584,5 +651,63 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error cleaning up resources", e)
         }
+    }
+
+    // Route Simulator Methods
+    
+    private fun setupRouteSimulatorCallbacks() {
+        routeSimulator?.onPositionChanged = { position, bearing, instruction ->
+            runOnUiThread {
+                binding.tvNavigationInstruction.text = instruction
+                val progress = routeSimulator?.getCurrentProgress()
+                progress?.let {
+                    binding.tvProgress.text = "Progress: ${String.format("%.1f", it.progressPercentage)}%"
+                    binding.tvRemainingDistance.text = "Remaining: ${String.format("%.1f", it.remainingDistance / 1000)} km"
+                }
+            }
+        }
+        
+        routeSimulator?.onSimulationStarted = {
+            runOnUiThread {
+                binding.navigationPanel.visibility = View.VISIBLE
+                binding.tvNavigationInstruction.text = "Route preview mode - Drag map to move marker"
+                Toast.makeText(this, "Route preview started - Touch map to move marker", Toast.LENGTH_LONG).show()
+            }
+        }
+        
+        routeSimulator?.onSimulationStopped = {
+            runOnUiThread {
+                binding.navigationPanel.visibility = View.GONE
+                Toast.makeText(this, "Route preview stopped", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    private fun setupMapTouchHandling(map: TomTomMap) {
+        // Note: TomTom SDK map touch handling would be implemented here
+        // For now, we'll add scroll/gesture handling in a future update
+        Log.d(TAG, "Map touch handling setup completed")
+    }
+    
+    private fun startRoutePreview() {
+        if (selectedRouteIndex < 0 || selectedRouteIndex >= routes.size) {
+            Toast.makeText(this, "Please select a route first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val selectedRoute = routes[selectedRouteIndex]
+        routeSimulator?.let { simulator ->
+            if (simulator.initializeRoute(selectedRoute)) {
+                simulator.startSimulation()
+                Log.d(TAG, "Route preview started for route $selectedRouteIndex")
+            } else {
+                Toast.makeText(this, "Failed to initialize route preview", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    private fun stopRoutePreview() {
+        routeSimulator?.stopSimulation()
+        Log.d(TAG, "Route preview stopped")
     }
 }
