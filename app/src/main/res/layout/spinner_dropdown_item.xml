@@ -7,6 +7,8 @@
     android:padding="16dp"
     android:textColor="@android:color/black"
     android:textSize="16sp"
-    android:background="?android:attr/selectableItemBackground"
+    android:textStyle="bold"
+    android:background="@android:color/white"
+    android:elevation="4dp"
     android:ellipsize="end"
     android:singleLine="true" />

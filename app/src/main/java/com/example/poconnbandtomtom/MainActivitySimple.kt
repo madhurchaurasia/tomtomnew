@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import com.example.poconnbandtomtom.models.NextBillionResponse
 import com.example.poconnbandtomtom.models.NextBillionRoute
 import com.example.poconnbandtomtom.navigation.NavigationManager
+import com.example.poconnbandtomtom.navigation.RouteSimulator
 import com.example.poconnbandtomtom.utils.PolylineDecoder
 import com.example.poconnbandtomtom.utils.Config
 import com.google.gson.Gson
@@ -35,6 +36,9 @@ class MainActivitySimple : AppCompatActivity() {
     private var mapFragment: MapFragment? = null
     private val routePolylines = mutableMapOf<Int, Polyline>()
     private val routeMarkers = mutableListOf<Marker>()
+    private var routeSimulator: RouteSimulator? = null
+    private var navigationArrow: Marker? = null
+    private var isPreviewMode = false
 
     private lateinit var btnLoadRoutes: Button
     private lateinit var btnClearRoutes: Button
@@ -190,7 +194,16 @@ class MainActivitySimple : AppCompatActivity() {
         }
 
         btnStartNavigation.setOnClickListener {
-            startNavigation()
+            if (isPreviewMode) {
+                stopRoutePreview()
+            } else {
+                startNavigation()
+            }
+        }
+
+        btnStartNavigation.setOnLongClickListener {
+            startRoutePreview()
+            true // Return true to consume the long click event
         }
 
         btnStopNavigation.setOnClickListener {
@@ -654,6 +667,32 @@ class MainActivitySimple : AppCompatActivity() {
                             tag = "route_markers"
                         )
                         routeMarkers.add(map.addMarker(endMarker))
+
+                        // Add navigation arrow at the start of selected route
+                        try {
+                            val navArrowMarker = MarkerOptions(
+                                coordinate = startPoint,
+                                pinImage = ImageFactory.fromResource(R.drawable.ic_navigation_arrow),
+                                tag = "navigation_arrow_selected"
+                            )
+                            val arrowMarker = map.addMarker(navArrowMarker)
+                            routeMarkers.add(arrowMarker)
+                            Log.d(TAG, "Navigation arrow added to selected route $index")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to add navigation arrow to route $index", e)
+                            // Fallback to system arrow
+                            try {
+                                val fallbackArrow = MarkerOptions(
+                                    coordinate = startPoint,
+                                    pinImage = ImageFactory.fromResource(android.R.drawable.ic_menu_send),
+                                    tag = "navigation_arrow_fallback"
+                                )
+                                routeMarkers.add(map.addMarker(fallbackArrow))
+                                Log.d(TAG, "Fallback navigation arrow added to route $index")
+                            } catch (e2: Exception) {
+                                Log.e(TAG, "Failed to add fallback navigation arrow", e2)
+                            }
+                        }
                     }
 
                     Log.d(TAG, "Route $index displayed with ${geoPoints.size} points, color: ${color.toString(16)}")
@@ -751,6 +790,140 @@ class MainActivitySimple : AppCompatActivity() {
                 Toast.makeText(this, "Location permission required for navigation", Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    private fun startRoutePreview() {
+        Log.d(TAG, "Starting route preview mode")
+
+        if (selectedRouteIndex == -1) {
+            Toast.makeText(this, "Please select a route first", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val selectedRoute = routes[selectedRouteIndex]
+        val encodedPolyline = selectedRoute.geometry
+
+        if (encodedPolyline == null) {
+            Toast.makeText(this, "No route geometry available for preview", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        try {
+            val geoPoints = decodePolyline(encodedPolyline)
+
+            if (geoPoints.isNotEmpty()) {
+                isPreviewMode = true
+
+                // Initialize RouteSimulator
+                tomTomMap?.let { map ->
+                    routeSimulator = RouteSimulator(this, map)
+                    // Use the selected route directly since it's already a NextBillionRoute
+
+                    if (routeSimulator?.initializeRoute(selectedRoute) == true) {
+                        routeSimulator?.onPositionChanged = { position, progress, instruction ->
+                            runOnUiThread {
+                                tvNavigationInstruction.text = "Route Preview: $instruction"
+                                tvProgress.text = "Preview Progress: ${(progress * 100).toInt()}%"
+                                navigationPanel.visibility = View.VISIBLE
+                                btnStartNavigation.text = "Exit Preview"
+                            }
+                        }
+                        routeSimulator?.startSimulation()
+                    }
+
+                    // Show navigation arrow at start of route
+                    showNavigationArrow(geoPoints.first())
+
+                    Toast.makeText(this, "Long press: Route Preview Mode activated", Toast.LENGTH_LONG).show()
+                    Log.d(TAG, "Route preview started with ${geoPoints.size} points")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting route preview", e)
+            Toast.makeText(this, "Failed to start route preview: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showNavigationArrow(position: GeoPoint) {
+        tomTomMap?.let { map ->
+            // Remove existing navigation arrow
+            navigationArrow?.let { marker ->
+                map.removeMarkers("navigation_arrow")
+                navigationArrow = null
+            }
+
+            try {
+                // Create navigation arrow marker
+                val markerOptions = MarkerOptions(
+                    coordinate = position,
+                    pinImage = ImageFactory.fromResource(R.drawable.ic_navigation_arrow),
+                    tag = "navigation_arrow"
+                )
+
+                navigationArrow = map.addMarker(markerOptions)
+                Log.d(TAG, "Navigation arrow added at position: $position")
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to add navigation arrow", e)
+                // Fallback to default marker
+                try {
+                    val fallbackOptions = MarkerOptions(
+                        coordinate = position,
+                        pinImage = ImageFactory.fromResource(android.R.drawable.ic_menu_mylocation),
+                        tag = "navigation_arrow_fallback"
+                    )
+                    navigationArrow = map.addMarker(fallbackOptions)
+                    Log.d(TAG, "Fallback navigation arrow added")
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Failed to add fallback navigation arrow", e2)
+                }
+            }
+        }
+    }
+
+    private fun updateNavigationArrowPosition(position: GeoPoint, routePoints: List<GeoPoint>) {
+        // Find closest point on route to the given position
+        val closestPoint = routePoints.minByOrNull { point ->
+            val latDiff = point.latitude - position.latitude
+            val lonDiff = point.longitude - position.longitude
+            latDiff * latDiff + lonDiff * lonDiff
+        } ?: position
+
+        showNavigationArrow(closestPoint)
+
+        // Update progress information
+        val routeIndex = routePoints.indexOf(closestPoint)
+        val progress = if (routePoints.isNotEmpty()) {
+            (routeIndex.toFloat() / routePoints.size * 100).toInt()
+        } else 0
+
+        runOnUiThread {
+            tvProgress.text = "Preview Progress: $progress%"
+            tvRemainingDistance.text = "Point: ${routeIndex + 1}/${routePoints.size}"
+        }
+    }
+
+    private fun stopRoutePreview() {
+        Log.d(TAG, "Stopping route preview mode")
+
+        isPreviewMode = false
+
+        // Clean up route simulator
+        routeSimulator?.stopSimulation()
+        routeSimulator = null
+
+        // Remove navigation arrow
+        navigationArrow?.let { marker ->
+            tomTomMap?.removeMarkers("navigation_arrow")
+        }
+        navigationArrow = null
+
+        runOnUiThread {
+            navigationPanel.visibility = View.GONE
+            btnStartNavigation.text = "Navigate"
+        }
+
+        Log.d(TAG, "Route preview stopped")
     }
 
     override fun onDestroy() {
