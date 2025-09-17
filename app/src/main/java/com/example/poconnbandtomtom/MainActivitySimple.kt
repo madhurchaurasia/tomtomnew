@@ -357,36 +357,60 @@ class MainActivitySimple : AppCompatActivity() {
      * NextBillion uses encoded polyline format (similar to Google's format)
      */
     private fun decodePolyline(encoded: String): List<GeoPoint> {
+        Log.d(TAG, "=== POLYLINE DECODING DEBUG START ===")
+        Log.d(TAG, "Decoding polyline of length: ${encoded.length}")
+        Log.d(TAG, "Polyline preview: ${encoded.take(50)}...")
+
         val poly = mutableListOf<GeoPoint>()
         var index = 0
         val len = encoded.length
         var lat = 0
         var lng = 0
 
-        while (index < len) {
-            var b: Int
-            var shift = 0
-            var result = 0
-            do {
-                b = encoded[index++].code - 63
-                result = result or (b and 0x1f shl shift)
-                shift += 5
-            } while (b >= 0x20)
-            val dlat = if (result and 1 != 0) (result shr 1).inv() else result shr 1
-            lat += dlat
+        try {
+            while (index < len) {
+                var b: Int
+                var shift = 0
+                var result = 0
+                do {
+                    if (index >= len) break
+                    b = encoded[index++].code - 63
+                    result = result or (b and 0x1f shl shift)
+                    shift += 5
+                } while (b >= 0x20)
+                val dlat = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+                lat += dlat
 
-            shift = 0
-            result = 0
-            do {
-                b = encoded[index++].code - 63
-                result = result or (b and 0x1f shl shift)
-                shift += 5
-            } while (b >= 0x20)
-            val dlng = if (result and 1 != 0) (result shr 1).inv() else result shr 1
-            lng += dlng
+                shift = 0
+                result = 0
+                do {
+                    if (index >= len) break
+                    b = encoded[index++].code - 63
+                    result = result or (b and 0x1f shl shift)
+                    shift += 5
+                } while (b >= 0x20)
+                val dlng = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+                lng += dlng
 
-            val geoPoint = GeoPoint(lat / 1E5, lng / 1E5)
-            poly.add(geoPoint)
+                val geoPoint = GeoPoint(lat / 1E5, lng / 1E5)
+                poly.add(geoPoint)
+
+                // Log first few points for debugging
+                if (poly.size <= 3) {
+                    Log.d(TAG, "Decoded point ${poly.size}: $geoPoint")
+                }
+            }
+
+            Log.d(TAG, "Polyline decoding completed: ${poly.size} points")
+            if (poly.isNotEmpty()) {
+                Log.d(TAG, "First point: ${poly.first()}")
+                Log.d(TAG, "Last point: ${poly.last()}")
+            }
+            Log.d(TAG, "=== POLYLINE DECODING DEBUG END ===")
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error decoding polyline", e)
+            Log.e(TAG, "Failed at index: $index of $len")
         }
 
         return poly
@@ -397,94 +421,183 @@ class MainActivitySimple : AppCompatActivity() {
      */
     private fun createTomTomRouteFromGeoPoints(geoPoints: List<GeoPoint>) {
         try {
+            Log.d(TAG, "=== ROUTE RENDERING DEBUG START ===")
+            Log.d(TAG, "Attempting to render ${geoPoints.size} points")
+
+            // Log first and last few points for debugging
+            if (geoPoints.isNotEmpty()) {
+                Log.d(TAG, "First point: ${geoPoints.first()}")
+                Log.d(TAG, "Last point: ${geoPoints.last()}")
+                if (geoPoints.size > 2) {
+                    Log.d(TAG, "Second point: ${geoPoints[1]}")
+                }
+            }
+
             val map = tomTomMap ?: run {
-                Log.e(TAG, "TomTom map not initialized")
+                Log.e(TAG, "TomTom map not initialized - cannot render route")
                 Toast.makeText(this, "Map not ready yet", Toast.LENGTH_SHORT).show()
                 return
             }
+            Log.d(TAG, "TomTom map is available: $map")
 
             // Clear existing route display
             clearMapRoute()
+            Log.d(TAG, "Cleared existing routes")
 
             if (geoPoints.size < 2) {
-                Log.e(TAG, "Route must have at least 2 points")
+                Log.e(TAG, "Route must have at least 2 points, got ${geoPoints.size}")
                 return
             }
 
-            // Create polyline for the route
-            val polylineOptions = PolylineOptions(
-                coordinates = geoPoints,
-                tag = "route"
-            )
-            currentRoutePolyline = map.addPolyline(polylineOptions)
-
-            // Add markers for start and end points
-            val startPoint = geoPoints.first()
-            val endPoint = geoPoints.last()
-
-            // Start marker (green)
-            val startMarker = MarkerOptions(
-                coordinate = startPoint,
-                pinImage = ImageFactory.fromResource(R.drawable.ic_marker_start),
-                tag = "route_markers"
-            )
-            routeMarkers.add(map.addMarker(startMarker))
-
-            // End marker (red)
-            val endMarker = MarkerOptions(
-                coordinate = endPoint,
-                pinImage = ImageFactory.fromResource(R.drawable.ic_marker_end),
-                tag = "route_markers"
-            )
-            routeMarkers.add(map.addMarker(endMarker))
-
-            // Zoom to fit the route
-            val bounds = geoPoints.fold(
-                Pair(
-                    GeoPoint(90.0, 180.0),  // min
-                    GeoPoint(-90.0, -180.0)  // max
-                )
-            ) { acc, point ->
-                Pair(
-                    GeoPoint(
-                        minOf(acc.first.latitude, point.latitude),
-                        minOf(acc.first.longitude, point.longitude)
-                    ),
-                    GeoPoint(
-                        maxOf(acc.second.latitude, point.latitude),
-                        maxOf(acc.second.longitude, point.longitude)
-                    )
-                )
-            }
-
-            // Move camera to show the entire route
+            // Move camera FIRST to ensure route area is visible
+            val bounds = calculateBounds(geoPoints)
             val center = GeoPoint(
                 (bounds.first.latitude + bounds.second.latitude) / 2,
                 (bounds.first.longitude + bounds.second.longitude) / 2
             )
+            val zoom = calculateZoomLevel(bounds)
 
+            Log.d(TAG, "Camera center: $center, zoom: $zoom")
+            Log.d(TAG, "Route bounds: ${bounds.first} to ${bounds.second}")
+
+            // Move camera first
             map.moveCamera(
                 CameraOptions(
                     position = center,
-                    zoom = calculateZoomLevel(bounds)
+                    zoom = zoom
                 )
             )
+            Log.d(TAG, "Camera moved to show route area")
 
-            Log.d(TAG, "Route displayed with ${geoPoints.size} points")
-            Toast.makeText(this, "Route displayed on map", Toast.LENGTH_SHORT).show()
+            // Add route polyline with explicit styling
+            try {
+                Log.d(TAG, "Creating polyline with ${geoPoints.size} coordinates")
+                val polylineOptions = PolylineOptions(
+                    coordinates = geoPoints,
+                    tag = "route"
+                )
+
+                currentRoutePolyline = map.addPolyline(polylineOptions)
+                Log.d(TAG, "Polyline added: $currentRoutePolyline")
+
+                if (currentRoutePolyline == null) {
+                    Log.e(TAG, "Failed to add polyline - returned null")
+                } else {
+                    Log.d(TAG, "Polyline successfully added to map")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error creating polyline", e)
+            }
+
+            // Add markers for start and end points
+            val startPoint = geoPoints.first()
+            val endPoint = geoPoints.last()
+            Log.d(TAG, "Adding markers - Start: $startPoint, End: $endPoint")
+
+            try {
+                // Create marker with default pin image
+                val startMarkerOptions = MarkerOptions(
+                    coordinate = startPoint,
+                    pinImage = ImageFactory.fromResource(R.drawable.ic_marker_start),
+                    tag = "route_start"
+                )
+                val startMarker = map.addMarker(startMarkerOptions)
+                Log.d(TAG, "Start marker added: $startMarker")
+
+                if (startMarker != null) {
+                    routeMarkers.add(startMarker)
+                } else {
+                    Log.e(TAG, "Failed to add start marker")
+                }
+
+                val endMarkerOptions = MarkerOptions(
+                    coordinate = endPoint,
+                    pinImage = ImageFactory.fromResource(R.drawable.ic_marker_end),
+                    tag = "route_end"
+                )
+                val endMarker = map.addMarker(endMarkerOptions)
+                Log.d(TAG, "End marker added: $endMarker")
+
+                if (endMarker != null) {
+                    routeMarkers.add(endMarker)
+                } else {
+                    Log.e(TAG, "Failed to add end marker")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error adding markers", e)
+                // Try with default markers if custom icons fail
+                try {
+                    Log.d(TAG, "Trying default markers as fallback")
+                    val basicStartMarker = map.addMarker(MarkerOptions(
+                        coordinate = startPoint,
+                        pinImage = ImageFactory.fromResource(android.R.drawable.ic_menu_mylocation),
+                        tag = "route_start_fallback"
+                    ))
+                    val basicEndMarker = map.addMarker(MarkerOptions(
+                        coordinate = endPoint,
+                        pinImage = ImageFactory.fromResource(android.R.drawable.ic_menu_mylocation),
+                        tag = "route_end_fallback"
+                    ))
+
+                    if (basicStartMarker != null) routeMarkers.add(basicStartMarker)
+                    if (basicEndMarker != null) routeMarkers.add(basicEndMarker)
+
+                    Log.d(TAG, "Fallback markers added")
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Failed to add fallback markers", e2)
+                }
+            }
+
+            Log.d(TAG, "Route rendering completed - polyline: $currentRoutePolyline, markers: ${routeMarkers.size}")
+            Log.d(TAG, "=== ROUTE RENDERING DEBUG END ===")
+
+            runOnUiThread {
+                Toast.makeText(this, "Route displayed: ${geoPoints.size} points, ${routeMarkers.size} markers", Toast.LENGTH_LONG).show()
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to display route on map", e)
-            Toast.makeText(this, "Failed to display route: ${e.message}", Toast.LENGTH_SHORT).show()
+            runOnUiThread {
+                Toast.makeText(this, "Failed to display route: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun calculateBounds(geoPoints: List<GeoPoint>): Pair<GeoPoint, GeoPoint> {
+        return geoPoints.fold(
+            Pair(
+                GeoPoint(90.0, 180.0),  // min
+                GeoPoint(-90.0, -180.0)  // max
+            )
+        ) { acc, point ->
+            Pair(
+                GeoPoint(
+                    minOf(acc.first.latitude, point.latitude),
+                    minOf(acc.first.longitude, point.longitude)
+                ),
+                GeoPoint(
+                    maxOf(acc.second.latitude, point.latitude),
+                    maxOf(acc.second.longitude, point.longitude)
+                )
+            )
         }
     }
 
     private fun clearMapRoute() {
-        // Clear all polylines and markers by tag
-        tomTomMap?.removePolylines("route")
-        tomTomMap?.removeMarkers("route_markers")
-        currentRoutePolyline = null
-        routeMarkers.clear()
+        try {
+            Log.d(TAG, "Clearing existing route display")
+            // Clear all polylines and markers by tag
+            tomTomMap?.removePolylines("route")
+            tomTomMap?.removeMarkers("route_start")
+            tomTomMap?.removeMarkers("route_end")
+            tomTomMap?.removeMarkers("route_markers") // Old tag for compatibility
+
+            currentRoutePolyline = null
+            routeMarkers.clear()
+            Log.d(TAG, "Route display cleared")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clearing route", e)
+        }
     }
 
     private fun calculateZoomLevel(bounds: Pair<GeoPoint, GeoPoint>): Double {
