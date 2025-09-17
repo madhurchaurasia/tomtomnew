@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    tools:context=".MainActivity">
+
+    <!-- Top control panel -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="8dp"
+        android:background="@color/design_default_color_primary">
+
+        <Button
+            android:id="@+id/btnLoadRoutes"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="4dp"
+            android:text="Load Routes"
+            android:textColor="@android:color/white"
+            android:backgroundTint="@color/design_default_color_secondary" />
+
+        <Button
+            android:id="@+id/btnClearRoutes"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="4dp"
+            android:text="Clear Routes"
+            android:textColor="@android:color/white"
+            android:backgroundTint="@color/design_default_color_error" />
+
+    </LinearLayout>
+
+    <!-- Route selection spinner -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="8dp"
+        android:background="@color/design_default_color_surface">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Select Route: "
+            android:textStyle="bold"
+            android:layout_gravity="center_vertical" />
+
+        <Spinner
+            android:id="@+id/spinnerRoutes"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp" />
+
+        <Button
+            android:id="@+id/btnStartNavigation"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Navigate"
+            android:layout_marginStart="8dp"
+            android:backgroundTint="@color/design_default_color_primary_variant" />
+
+    </LinearLayout>
+
+    <!-- Navigation info panel -->
+    <LinearLayout
+        android:id="@+id/navigationPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="@color/design_default_color_primary_dark"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvNavigationInstruction"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Navigation instruction will appear here"
+            android:textColor="@android:color/white"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
+
+            <TextView
+                android:id="@+id/tvProgress"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Progress: 0%"
+                android:textColor="@android:color/white" />
+
+            <TextView
+                android:id="@+id/tvRemainingDistance"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Remaining: 0 km"
+                android:textColor="@android:color/white"
+                android:gravity="end" />
+
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnStopNavigation"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="8dp"
+            android:text="Stop Navigation"
+            android:backgroundTint="@color/design_default_color_error" />
+
+    </LinearLayout>
+
+    <!-- TomTom Map Fragment -->
+    <androidx.fragment.app.FragmentContainerView
+        android:id="@+id/mapFragment"
+        android:name="com.tomtom.sdk.map.display.ui.MapFragment"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- Route info panel -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:background="@color/design_default_color_surface">
+
+        <TextView
+            android:id="@+id/tvRouteInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="12dp"
+            android:text="Select a route to see information"
+            android:textSize="12sp"
+            android:fontFamily="monospace" />
+
+    </ScrollView>
+
+</LinearLayout>
