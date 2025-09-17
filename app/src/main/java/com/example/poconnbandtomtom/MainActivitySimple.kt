@@ -11,12 +11,19 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.poconnbandtomtom.models.NextBillionResponse
 import com.example.poconnbandtomtom.models.NextBillionRoute
+import com.example.poconnbandtomtom.navigation.NavigationManager
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.tomtom.sdk.location.GeoPoint
 import com.tomtom.sdk.map.display.MapOptions
 import com.tomtom.sdk.map.display.TomTomMap
 import com.tomtom.sdk.map.display.camera.CameraOptions
 import com.tomtom.sdk.map.display.ui.MapFragment
+import com.tomtom.sdk.map.display.marker.MarkerOptions
+import com.tomtom.sdk.map.display.marker.Marker
+import com.tomtom.sdk.map.display.polyline.PolylineOptions
+import com.tomtom.sdk.map.display.polyline.Polyline
+import com.tomtom.sdk.map.display.image.ImageFactory
 import java.io.InputStreamReader
 
 class MainActivitySimple : AppCompatActivity() {
@@ -24,6 +31,8 @@ class MainActivitySimple : AppCompatActivity() {
     private var tomTomMap: TomTomMap? = null
     private lateinit var mapContainer: FrameLayout
     private var mapFragment: MapFragment? = null
+    private var currentRoutePolyline: Polyline? = null
+    private val routeMarkers = mutableListOf<Marker>()
 
     private lateinit var btnLoadRoutes: Button
     private lateinit var btnClearRoutes: Button
@@ -38,6 +47,10 @@ class MainActivitySimple : AppCompatActivity() {
 
     private var routes: List<NextBillionRoute> = emptyList()
     private var selectedRouteIndex = -1
+
+    // Navigation Manager for turn-by-turn navigation
+    private lateinit var navigationManager: NavigationManager
+    private var isNavigationActive = false
 
     companion object {
         private const val LOCATION_PERMISSION_REQUEST_CODE = 1001
@@ -64,6 +77,9 @@ class MainActivitySimple : AppCompatActivity() {
                 requestLocationPermission()
             }
 
+            // Initialize NavigationManager
+            initializeNavigationManager()
+
             // Load routes
             loadRoutesFromAssets()
         } catch (e: Exception) {
@@ -84,6 +100,66 @@ class MainActivitySimple : AppCompatActivity() {
         tvRemainingDistance = findViewById(R.id.tvRemainingDistance)
         btnStopNavigation = findViewById(R.id.btnStopNavigation)
         tvRouteInfo = findViewById(R.id.tvRouteInfo)
+    }
+
+    private fun initializeNavigationManager() {
+        try {
+            navigationManager = NavigationManager(this, TOMTOM_API_KEY)
+
+            navigationManager.setNavigationCallback(object : NavigationManager.NavigationCallback {
+                override fun onNavigationStarted() {
+                    runOnUiThread {
+                        isNavigationActive = true
+                        navigationPanel.visibility = View.VISIBLE
+                        btnStartNavigation.isEnabled = false
+                        btnStopNavigation.isEnabled = true
+                        Log.d(TAG, "Navigation started via NavigationManager")
+                    }
+                }
+
+                override fun onNavigationStopped() {
+                    runOnUiThread {
+                        isNavigationActive = false
+                        navigationPanel.visibility = View.GONE
+                        btnStartNavigation.isEnabled = true
+                        btnStopNavigation.isEnabled = false
+                        Log.d(TAG, "Navigation stopped via NavigationManager")
+                    }
+                }
+
+                override fun onNavigationError(error: String) {
+                    runOnUiThread {
+                        Log.e(TAG, "Navigation error: $error")
+                        Toast.makeText(this@MainActivitySimple, "Navigation error: $error", Toast.LENGTH_LONG).show()
+                    }
+                }
+
+                override fun onInstructionUpdated(instruction: String) {
+                    runOnUiThread {
+                        tvNavigationInstruction.text = instruction
+                        Log.d(TAG, "Navigation instruction: $instruction")
+                    }
+                }
+
+                override fun onProgressUpdated(percentage: Double, remainingDistance: String) {
+                    runOnUiThread {
+                        tvProgress.text = "Progress: ${String.format("%.1f", percentage)}%"
+                        tvRemainingDistance.text = "Remaining: $remainingDistance"
+                        Log.d(TAG, "Navigation progress: ${String.format("%.1f", percentage)}%, remaining: $remainingDistance")
+                    }
+                }
+            })
+
+            if (navigationManager.initialize()) {
+                Log.d(TAG, "NavigationManager initialized successfully")
+            } else {
+                Log.e(TAG, "Failed to initialize NavigationManager")
+                Toast.makeText(this, "Failed to initialize navigation", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing NavigationManager", e)
+            Toast.makeText(this, "Navigation initialization failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun setupUI() {
@@ -187,6 +263,7 @@ class MainActivitySimple : AppCompatActivity() {
         spinnerRoutes.adapter = null
         tvRouteInfo.text = "Routes cleared"
         navigationPanel.visibility = View.GONE
+        clearMapRoute()
     }
 
     private fun showRouteInfo(route: NextBillionRoute) {
@@ -200,19 +277,229 @@ class MainActivitySimple : AppCompatActivity() {
 
     private fun startNavigation() {
         if (selectedRouteIndex >= 0 && selectedRouteIndex < routes.size) {
-            navigationPanel.visibility = View.VISIBLE
-            tvNavigationInstruction.text = "Navigation started for ${routes[selectedRouteIndex].vehicle}"
-            tvProgress.text = "Progress: 0%"
-            tvRemainingDistance.text = "Starting navigation..."
-            Toast.makeText(this, "Navigation started", Toast.LENGTH_SHORT).show()
+            val selectedRoute = routes[selectedRouteIndex]
+
+            try {
+                selectedRoute.geometry?.let { encodedPolyline ->
+                    // Decode NextBillion polyline to GeoPoints
+                    val geoPoints = decodePolyline(encodedPolyline)
+
+                    if (geoPoints.size >= 2) {
+                        // Display route on map first
+                        parseAndDisplayNextBillionRoute(encodedPolyline, selectedRoute.vehicle)
+
+                        // Start actual turn-by-turn navigation using NavigationManager
+                        navigationManager.startNavigationWithGeometry(geoPoints)
+
+                        Log.d(TAG, "Starting turn-by-turn navigation with ${geoPoints.size} waypoints")
+                        Toast.makeText(this, "Turn-by-turn navigation started", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this, "Route must have at least 2 waypoints", Toast.LENGTH_SHORT).show()
+                    }
+                } ?: run {
+                    Toast.makeText(this, "Route geometry not available", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start navigation with NextBillion route", e)
+                Toast.makeText(this, "Failed to start navigation: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         } else {
             Toast.makeText(this, "Please select a route first", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun stopNavigation() {
-        navigationPanel.visibility = View.GONE
-        Toast.makeText(this, "Navigation stopped", Toast.LENGTH_SHORT).show()
+        try {
+            // Stop navigation via NavigationManager
+            navigationManager.stopNavigation()
+
+            // Clear route from map
+            clearMapRoute()
+
+            Log.d(TAG, "Navigation stopped by user")
+            Toast.makeText(this, "Navigation stopped", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping navigation", e)
+            Toast.makeText(this, "Error stopping navigation: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Parse NextBillion route geometry and display on TomTom map
+     * This is the key integration point between NextBillion and TomTom
+     */
+    private fun parseAndDisplayNextBillionRoute(encodedPolyline: String, routeName: String) {
+        try {
+            Log.d(TAG, "Parsing NextBillion route: $routeName")
+            Log.d(TAG, "Encoded polyline length: ${encodedPolyline.length}")
+
+            // Decode polyline from NextBillion geometry (encoded polyline format)
+            val geoPoints = decodePolyline(encodedPolyline)
+
+            if (geoPoints.size >= 2) {
+                // Create TomTom route from NextBillion geometry
+                createTomTomRouteFromGeoPoints(geoPoints)
+
+                Log.d(TAG, "Successfully converted NextBillion route to TomTom route: ${geoPoints.size} points")
+                Toast.makeText(this, "Route loaded: $routeName (${geoPoints.size} waypoints)", Toast.LENGTH_SHORT).show()
+            } else {
+                throw IllegalArgumentException("Route must have at least 2 points")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse NextBillion route", e)
+            Toast.makeText(this, "Failed to parse route: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+
+    /**
+     * Decode polyline string to list of GeoPoints
+     * NextBillion uses encoded polyline format (similar to Google's format)
+     */
+    private fun decodePolyline(encoded: String): List<GeoPoint> {
+        val poly = mutableListOf<GeoPoint>()
+        var index = 0
+        val len = encoded.length
+        var lat = 0
+        var lng = 0
+
+        while (index < len) {
+            var b: Int
+            var shift = 0
+            var result = 0
+            do {
+                b = encoded[index++].code - 63
+                result = result or (b and 0x1f shl shift)
+                shift += 5
+            } while (b >= 0x20)
+            val dlat = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+            lat += dlat
+
+            shift = 0
+            result = 0
+            do {
+                b = encoded[index++].code - 63
+                result = result or (b and 0x1f shl shift)
+                shift += 5
+            } while (b >= 0x20)
+            val dlng = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+            lng += dlng
+
+            val geoPoint = GeoPoint(lat / 1E5, lng / 1E5)
+            poly.add(geoPoint)
+        }
+
+        return poly
+    }
+
+    /**
+     * Create TomTom route from GeoPoints and display on map
+     */
+    private fun createTomTomRouteFromGeoPoints(geoPoints: List<GeoPoint>) {
+        try {
+            val map = tomTomMap ?: run {
+                Log.e(TAG, "TomTom map not initialized")
+                Toast.makeText(this, "Map not ready yet", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            // Clear existing route display
+            clearMapRoute()
+
+            if (geoPoints.size < 2) {
+                Log.e(TAG, "Route must have at least 2 points")
+                return
+            }
+
+            // Create polyline for the route
+            val polylineOptions = PolylineOptions(
+                coordinates = geoPoints,
+                tag = "route"
+            )
+            currentRoutePolyline = map.addPolyline(polylineOptions)
+
+            // Add markers for start and end points
+            val startPoint = geoPoints.first()
+            val endPoint = geoPoints.last()
+
+            // Start marker (green)
+            val startMarker = MarkerOptions(
+                coordinate = startPoint,
+                pinImage = ImageFactory.fromResource(R.drawable.ic_marker_start),
+                tag = "route_markers"
+            )
+            routeMarkers.add(map.addMarker(startMarker))
+
+            // End marker (red)
+            val endMarker = MarkerOptions(
+                coordinate = endPoint,
+                pinImage = ImageFactory.fromResource(R.drawable.ic_marker_end),
+                tag = "route_markers"
+            )
+            routeMarkers.add(map.addMarker(endMarker))
+
+            // Zoom to fit the route
+            val bounds = geoPoints.fold(
+                Pair(
+                    GeoPoint(90.0, 180.0),  // min
+                    GeoPoint(-90.0, -180.0)  // max
+                )
+            ) { acc, point ->
+                Pair(
+                    GeoPoint(
+                        minOf(acc.first.latitude, point.latitude),
+                        minOf(acc.first.longitude, point.longitude)
+                    ),
+                    GeoPoint(
+                        maxOf(acc.second.latitude, point.latitude),
+                        maxOf(acc.second.longitude, point.longitude)
+                    )
+                )
+            }
+
+            // Move camera to show the entire route
+            val center = GeoPoint(
+                (bounds.first.latitude + bounds.second.latitude) / 2,
+                (bounds.first.longitude + bounds.second.longitude) / 2
+            )
+
+            map.moveCamera(
+                CameraOptions(
+                    position = center,
+                    zoom = calculateZoomLevel(bounds)
+                )
+            )
+
+            Log.d(TAG, "Route displayed with ${geoPoints.size} points")
+            Toast.makeText(this, "Route displayed on map", Toast.LENGTH_SHORT).show()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to display route on map", e)
+            Toast.makeText(this, "Failed to display route: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun clearMapRoute() {
+        // Clear all polylines and markers by tag
+        tomTomMap?.removePolylines("route")
+        tomTomMap?.removeMarkers("route_markers")
+        currentRoutePolyline = null
+        routeMarkers.clear()
+    }
+
+    private fun calculateZoomLevel(bounds: Pair<GeoPoint, GeoPoint>): Double {
+        val latDiff = bounds.second.latitude - bounds.first.latitude
+        val lonDiff = bounds.second.longitude - bounds.first.longitude
+        val maxDiff = maxOf(latDiff, lonDiff)
+
+        return when {
+            maxDiff > 10 -> 5.0
+            maxDiff > 5 -> 7.0
+            maxDiff > 2 -> 9.0
+            maxDiff > 1 -> 11.0
+            maxDiff > 0.5 -> 13.0
+            else -> 15.0
+        }
     }
 
     private fun checkLocationPermission(): Boolean {
@@ -243,6 +530,19 @@ class MainActivitySimple : AppCompatActivity() {
             } else {
                 Toast.makeText(this, "Location permission required for navigation", Toast.LENGTH_LONG).show()
             }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            // Clean up NavigationManager resources
+            if (::navigationManager.isInitialized) {
+                navigationManager.cleanup()
+                Log.d(TAG, "NavigationManager resources cleaned up")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error cleaning up NavigationManager", e)
         }
     }
 }

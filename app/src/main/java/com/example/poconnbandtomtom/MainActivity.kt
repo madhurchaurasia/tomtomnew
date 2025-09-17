@@ -33,6 +33,7 @@ import com.tomtom.sdk.map.display.ui.MapFragment
 import com.tomtom.sdk.map.display.style.StyleMode
 import com.tomtom.sdk.map.display.image.ImageFactory
 import com.tomtom.sdk.location.DefaultLocationProviderFactory
+import com.example.poconnbandtomtom.navigation.NavigationManager
 import kotlinx.coroutines.launch
 import java.io.InputStreamReader
 
@@ -46,6 +47,9 @@ class MainActivity : AppCompatActivity() {
 
     private var routes: List<NextBillionRoute> = emptyList()
     private var selectedRouteIndex = -1
+
+    // Navigation Manager
+    private lateinit var navigationManager: NavigationManager
 
     companion object {
         private const val LOCATION_PERMISSION_REQUEST_CODE = 1001
@@ -74,6 +78,9 @@ class MainActivity : AppCompatActivity() {
             } else {
                 requestLocationPermission()
             }
+
+            // Initialize Navigation Manager
+            initializeNavigationManager()
 
             // Load routes immediately
             loadRoutesFromAssets()
@@ -138,6 +145,64 @@ class MainActivity : AppCompatActivity() {
             Log.e(TAG, "Failed to initialize TomTom services", e)
             e.printStackTrace()
             Toast.makeText(this, "TomTom SDK initialization failed: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun initializeNavigationManager() {
+        try {
+            Log.d(TAG, "Initializing Navigation Manager")
+
+            navigationManager = NavigationManager(this, TOMTOM_API_KEY)
+
+            // Set navigation callback to handle events
+            navigationManager.setNavigationCallback(object : NavigationManager.NavigationCallback {
+                override fun onNavigationStarted() {
+                    runOnUiThread {
+                        binding.navigationPanel.visibility = View.VISIBLE
+                        binding.tvNavigationInstruction.text = "Navigation started - calculating route..."
+                        Toast.makeText(this@MainActivity, "Turn-by-turn navigation started", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onNavigationStopped() {
+                    runOnUiThread {
+                        binding.navigationPanel.visibility = View.GONE
+                        Toast.makeText(this@MainActivity, "Navigation stopped", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                override fun onNavigationError(error: String) {
+                    runOnUiThread {
+                        Log.e(TAG, "Navigation error: $error")
+                        Toast.makeText(this@MainActivity, "Navigation error: $error", Toast.LENGTH_LONG).show()
+                        binding.navigationPanel.visibility = View.GONE
+                    }
+                }
+
+                override fun onInstructionUpdated(instruction: String) {
+                    runOnUiThread {
+                        binding.tvNavigationInstruction.text = instruction
+                    }
+                }
+
+                override fun onProgressUpdated(percentage: Double, remainingDistance: String) {
+                    runOnUiThread {
+                        binding.tvProgress.text = "Progress: ${String.format("%.1f", percentage)}%"
+                        binding.tvRemainingDistance.text = "Remaining: $remainingDistance"
+                    }
+                }
+            })
+
+            // Initialize the navigation manager
+            if (navigationManager.initialize()) {
+                Log.d(TAG, "Navigation Manager initialized successfully")
+            } else {
+                Log.e(TAG, "Failed to initialize Navigation Manager")
+                Toast.makeText(this, "Failed to initialize navigation system", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error initializing Navigation Manager", e)
+            Toast.makeText(this, "Navigation initialization failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -223,18 +288,27 @@ class MainActivity : AppCompatActivity() {
         if (selectedRouteIndex >= 0 && selectedRouteIndex < routes.size) {
             val selectedRoute = routes[selectedRouteIndex]
 
-            // Convert NextBillion route geometry to TomTom route
             try {
                 selectedRoute.geometry?.let { geoJsonString ->
-                    parseAndDisplayNextBillionRoute(geoJsonString, selectedRoute.vehicle)
+                    // Parse NextBillion route geometry to GeoPoints
+                    val routePoints = parseGeoJsonString(geoJsonString)
+                    val geoPoints = parseGeoJsonRoute(routePoints)
+
+                    if (geoPoints.size >= 2) {
+                        // Display route on map
+                        createTomTomRouteFromGeoPoints(geoPoints)
+
+                        // Start actual turn-by-turn navigation using NavigationManager
+                        Log.d(TAG, "Starting navigation with ${geoPoints.size} waypoints")
+                        navigationManager.startNavigationWithGeometry(geoPoints)
+
+                        Toast.makeText(this, "Starting turn-by-turn navigation for ${selectedRoute.vehicle}", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(this, "Route must have at least 2 waypoints", Toast.LENGTH_SHORT).show()
+                    }
+                } ?: run {
+                    Toast.makeText(this, "Route geometry not available", Toast.LENGTH_SHORT).show()
                 }
-
-                binding.navigationPanel.visibility = View.VISIBLE
-                binding.tvNavigationInstruction.text = "Navigation started for ${selectedRoute.vehicle}"
-                binding.tvProgress.text = "Progress: 0%"
-                binding.tvRemainingDistance.text = "Starting navigation..."
-
-                Toast.makeText(this, "Navigation started with NextBillion route", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start navigation with NextBillion route", e)
                 Toast.makeText(this, "Failed to start navigation: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -423,8 +497,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopNavigation() {
-        binding.navigationPanel.visibility = View.GONE
-        Toast.makeText(this, "Navigation stopped", Toast.LENGTH_SHORT).show()
+        try {
+            navigationManager.stopNavigation()
+            binding.navigationPanel.visibility = View.GONE
+            Log.d(TAG, "Navigation stopped via UI")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping navigation", e)
+            binding.navigationPanel.visibility = View.GONE
+            Toast.makeText(this, "Error stopping navigation: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun checkLocationPermission(): Boolean {
@@ -491,6 +572,11 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
 
         try {
+            // Clean up navigation resources
+            if (::navigationManager.isInitialized) {
+                navigationManager.cleanup()
+            }
+
             // Clean up map resources
             clearMapRoute()
             tomTomMap?.setLocationProvider(null)

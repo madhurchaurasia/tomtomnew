@@ -56,6 +56,9 @@ dependencies {
     implementation(libs.tomtom.search.online)
     implementation(libs.tomtom.vehicle.model)
 
+    // Note: Additional navigation dependencies may not be available in this SDK version
+    // The core navigation functionality is provided by tomtom-navigation-online
+
     // Location services
     implementation("com.google.android.gms:play-services-location:21.0.1")
 

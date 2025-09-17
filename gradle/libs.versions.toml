@@ -24,6 +24,9 @@ tomtom-routing-online = { module = "com.tomtom.sdk.routing:route-planner-online"
 tomtom-navigation-online = { module = "com.tomtom.sdk.navigation:navigation-online", version.ref = "tomtom_sdk" }
 tomtom-search-online = { module = "com.tomtom.sdk.search:search-online", version.ref = "tomtom_sdk" }
 tomtom-vehicle-model = { module = "com.tomtom.sdk.vehicle:model", version.ref = "tomtom_sdk" }
+tomtom-navigation-ui = { module = "com.tomtom.sdk.navigation:navigation-ui", version.ref = "tomtom_sdk" }
+tomtom-guidance = { module = "com.tomtom.sdk.navigation:guidance", version.ref = "tomtom_sdk" }
+tomtom-route-replanner = { module = "com.tomtom.sdk.navigation:route-replanner", version.ref = "tomtom_sdk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
