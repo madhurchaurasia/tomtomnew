@@ -793,55 +793,65 @@ class MainActivitySimple : AppCompatActivity() {
     }
 
     private fun startRoutePreview() {
-        Log.d(TAG, "Starting route preview mode")
+        Log.d(TAG, "Starting route preview mode - entry point")
 
         if (selectedRouteIndex == -1) {
             Toast.makeText(this, "Please select a route first", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val selectedRoute = routes[selectedRouteIndex]
-        val encodedPolyline = selectedRoute.geometry
+        Log.d(TAG, "Route preview - selected route index: $selectedRouteIndex")
 
-        if (encodedPolyline == null) {
-            Toast.makeText(this, "No route geometry available for preview", Toast.LENGTH_SHORT).show()
-            return
-        }
+        // Show immediate feedback to user
+        Toast.makeText(this, "Starting route preview...", Toast.LENGTH_SHORT).show()
 
-        try {
-            val geoPoints = decodePolyline(encodedPolyline)
+        // Run route preview setup asynchronously to avoid UI blocking
+        Thread {
+            try {
+                val selectedRoute = routes[selectedRouteIndex]
+                val encodedPolyline = selectedRoute.geometry
 
-            if (geoPoints.isNotEmpty()) {
-                isPreviewMode = true
+                Log.d(TAG, "Route preview - geometry length: ${encodedPolyline.length}")
 
-                // Initialize RouteSimulator
-                tomTomMap?.let { map ->
-                    routeSimulator = RouteSimulator(this, map)
-                    // Use the selected route directly since it's already a NextBillionRoute
-
-                    if (routeSimulator?.initializeRoute(selectedRoute) == true) {
-                        routeSimulator?.onPositionChanged = { position, progress, instruction ->
-                            runOnUiThread {
-                                tvNavigationInstruction.text = "Route Preview: $instruction"
-                                tvProgress.text = "Preview Progress: ${(progress * 100).toInt()}%"
-                                navigationPanel.visibility = View.VISIBLE
-                                btnStartNavigation.text = "Exit Preview"
-                            }
-                        }
-                        routeSimulator?.startSimulation()
+                runOnUiThread {
+                    if (encodedPolyline.isEmpty()) {
+                        Toast.makeText(this, "No route geometry available for preview", Toast.LENGTH_SHORT).show()
+                        return@runOnUiThread
                     }
 
-                    // Show navigation arrow at start of route
-                    showNavigationArrow(geoPoints.first())
+                    // Simple preview mode without complex RouteSimulator
+                    isPreviewMode = true
 
-                    Toast.makeText(this, "Long press: Route Preview Mode activated", Toast.LENGTH_LONG).show()
-                    Log.d(TAG, "Route preview started with ${geoPoints.size} points")
+                    Log.d(TAG, "Route preview - entering preview mode")
+
+                    // Show preview UI immediately
+                    navigationPanel.visibility = View.VISIBLE
+                    tvNavigationInstruction.text = "Route Preview Mode - Long press Navigate to exit"
+                    tvProgress.text = "Preview: Route ${selectedRouteIndex + 1}"
+                    btnStartNavigation.text = "Exit Preview"
+
+                    // Just show a simple navigation arrow without complex simulation
+                    try {
+                        val geoPoints = decodePolyline(encodedPolyline)
+                        if (geoPoints.isNotEmpty()) {
+                            showNavigationArrow(geoPoints.first())
+                            Log.d(TAG, "Route preview - navigation arrow shown")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error decoding polyline for preview", e)
+                    }
+
+                    Toast.makeText(this, "Route Preview Mode activated", Toast.LENGTH_LONG).show()
+                    Log.d(TAG, "Route preview - setup completed")
+                }
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Error in route preview thread", e)
+                runOnUiThread {
+                    Toast.makeText(this, "Failed to start route preview: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error starting route preview", e)
-            Toast.makeText(this, "Failed to start route preview: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        }.start()
     }
 
     private fun showNavigationArrow(position: GeoPoint) {
@@ -908,22 +918,24 @@ class MainActivitySimple : AppCompatActivity() {
 
         isPreviewMode = false
 
-        // Clean up route simulator
+        // Clean up route simulator (if any)
         routeSimulator?.stopSimulation()
         routeSimulator = null
 
         // Remove navigation arrow
-        navigationArrow?.let { marker ->
+        try {
             tomTomMap?.removeMarkers("navigation_arrow")
-        }
-        navigationArrow = null
-
-        runOnUiThread {
-            navigationPanel.visibility = View.GONE
-            btnStartNavigation.text = "Navigate"
+            navigationArrow = null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error removing navigation arrow", e)
         }
 
-        Log.d(TAG, "Route preview stopped")
+        // Update UI
+        navigationPanel.visibility = View.GONE
+        btnStartNavigation.text = "Navigate"
+
+        Toast.makeText(this, "Route preview stopped", Toast.LENGTH_SHORT).show()
+        Log.d(TAG, "Route preview stopped successfully")
     }
 
     override fun onDestroy() {
