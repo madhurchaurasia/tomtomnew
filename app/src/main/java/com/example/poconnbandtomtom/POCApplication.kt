@@ -1,6 +1,9 @@
 package com.example.poconnbandtomtom
 
 import android.app.Application
+import com.tomtom.sdk.location.GeoPoint
+import com.tomtom.sdk.map.display.image.ImageFactory
+import com.tomtom.sdk.map.display.marker.MarkerOptions
 
 /**
  * Application class to initialize TomTom SDK
