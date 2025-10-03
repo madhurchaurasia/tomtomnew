@@ -44,7 +44,21 @@
             android:layout_alignParentStart="true"
             android:backgroundTint="@color/design_default_color_error"
             android:textColor="@android:color/white"
+            android:visibility="gone"
             android:text="Navigate" />
+
+        <Button
+            android:id="@+id/btnDelivered"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="5dp"
+            android:layout_marginEnd="5dp"
+            android:layout_below="@+id/spinnerRoutes"
+            android:layout_alignParentStart="true"
+            android:backgroundTint="@color/design_default_color_error"
+            android:text="Delivered"
+            android:visibility="gone"
+            android:textColor="@android:color/white" />
 
         <Button
             android:id="@+id/btnClearRoutes"
@@ -54,6 +68,7 @@
             android:layout_alignParentEnd="true"
             android:backgroundTint="@color/design_default_color_error"
             android:text="Clear Routes"
+            android:visibility="gone"
             android:textColor="@android:color/white" />
 
 
@@ -72,7 +87,20 @@
         android:layout_height="match_parent"
         android:layout_alignParentBottom="true"/>
 
+    <FrameLayout
+        android:id="@+id/map_frame"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
 
+        <ProgressBar
+            android:id="@+id/progressBarMapLoading"
+            style="@android:style/Widget.DeviceDefault.Light.ProgressBar.Large"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:visibility="gone"/>
+
+    </FrameLayout>
 
 
 </RelativeLayout>

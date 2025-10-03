@@ -2,6 +2,7 @@ package com.example.poconnbandtomtom
 
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
@@ -64,6 +65,11 @@ import com.tomtom.sdk.vehicle.VehicleProviderFactory
 import java.io.InputStreamReader
 import com.tomtom.sdk.map.display.image.ImageFactory
 import com.tomtom.sdk.map.display.marker.MarkerOptions
+import com.example.poconnbandtomtom.WebSocketClient
+import android.content.IntentFilter
+import android.os.Build
+import android.content.Context
+import android.content.BroadcastReceiver
 import okhttp3.*
 
 class NavigationActivity : AppCompatActivity() {
@@ -87,25 +93,36 @@ class NavigationActivity : AppCompatActivity() {
 
     private lateinit var webSocket: WebSocket
     private lateinit var client: OkHttpClient
+    private var isRoute = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         navigationBinding = ActivityNavigationBinding.inflate(layoutInflater)
         setContentView(navigationBinding.root)
-        navigationBinding.btnStartNavigation.setOnClickListener {
+        client = OkHttpClient()
+        val request = Request.Builder()
+            .url("ws://110.238.78.42:443/ws")
+            .build()
 
+        val webSocketListener = WebSocketClient(applicationContext)
+        webSocket = client.newWebSocket(request, webSocketListener)
+        navigationBinding.btnDelivered.setOnClickListener {
+                val request = Request.Builder()
+                    .url("ws://110.238.78.42:443/order/status")
+                    .build()
+
+                val webSocketListener = WebSocketClient(applicationContext)
+                webSocket = client.newWebSocket(request, webSocketListener)
+                webSocket.send("{\"order-id\":\"J4\",\"status\":\"delivered\"}")
+                navigationBinding.btnDelivered.visibility = View.GONE
+                navigationBinding.btnStartNavigation.visibility = View.GONE
         }
 
-//        client = OkHttpClient()
-//        val request = Request.Builder()
-//            .url("wss://110.238.78.42:443")
-//            .build()
-//
-//        val webSocketListener = WebSocketClient()
-//        webSocket = client.newWebSocket(request, webSocketListener)
-//
-//        // Send a message after connection is established
-//        webSocket.send("Hello, Server!")
+        navigationBinding.btnDelivered.visibility = View.GONE
+        navigationBinding.btnStartNavigation.visibility = View.GONE
+        navigationBinding.btnClearRoutes.visibility = View.GONE
+
+        navigationBinding.progressBarMapLoading.visibility =View.VISIBLE
 
         initLocationProvider()
 
@@ -125,20 +142,30 @@ class NavigationActivity : AppCompatActivity() {
 
             showUserLocation()
             setUpMapListeners()
+            initNavigationTileStore()
+            initRouting()
+            initNavigation()
+            loadRoutesFromAssets()
+            initUI()
         }
-
-        initNavigationTileStore()
-        initRouting()
-        initNavigation()
-        loadRoutesFromAssets()
-        initUI()
-
     }
 
     private fun initUI() {
         navigationBinding.btnClearRoutes.setOnClickListener {
-            clearRoutes()
-            navigationBinding.spinnerRoutes.setSelection(0)
+            if (isNavigationRunning()) {
+                Toast.makeText(applicationContext, "Please stop navigation first", Toast.LENGTH_SHORT).show()
+            }
+            else{
+                navigationBinding.btnDelivered.visibility = View.GONE
+                navigationBinding.btnStartNavigation.visibility = View.GONE
+                navigationBinding.btnClearRoutes.visibility = View.GONE
+                navigationBinding.progressBarMapLoading.visibility =View.VISIBLE
+                clearMap()
+                navigationBinding.spinnerRoutes.setSelection(0)
+                stopNavigation()
+                showUserLocation()
+            }
+
         }
         navigationBinding.spinnerRoutes.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -153,10 +180,21 @@ class NavigationActivity : AppCompatActivity() {
             }
         }
         navigationBinding.btnStartNavigation.setOnClickListener {
-            if(navigationRoute!=null){
-                mapFragment.currentLocationButton.visibilityPolicy = VisibilityPolicy.Invisible
-                navigationBinding.navigationFragmentContainer.visibility = View.VISIBLE
-                startNavigation(navigationRoute)
+            if(selectedRouteIndex!=-1){
+                if (isNavigationRunning()) {
+                    Toast.makeText(applicationContext, "Navigation Already Running", Toast.LENGTH_SHORT).show()
+                }
+                else
+                {
+                    mapFragment.currentLocationButton.visibilityPolicy = VisibilityPolicy.Invisible
+                    navigationBinding.navigationFragmentContainer.visibility = View.VISIBLE
+                    startNavigation(navigationRoute)
+
+                    navigationBinding.btnDelivered.visibility = View.VISIBLE
+                    navigationBinding.btnStartNavigation.visibility = View.GONE
+                }
+
+
             }
 
         }
@@ -212,6 +250,10 @@ class NavigationActivity : AppCompatActivity() {
         )
 
         routePlanner.planRoute(routePlanningOptions, routePlanningCallback)
+
+        navigationBinding.btnDelivered.visibility = View.INVISIBLE
+        navigationBinding.btnStartNavigation.visibility = View.VISIBLE
+        navigationBinding.btnClearRoutes.visibility = View.VISIBLE
 
     }
 
@@ -304,10 +346,14 @@ class NavigationActivity : AppCompatActivity() {
         onLocationUpdateListener = OnLocationUpdateListener { location ->
             val locationMarker = LocationMarkerOptions(type = LocationMarkerOptions.Type.Pointer)
             tomTomMap.enableLocationMarker(locationMarker)
-            tomTomMap.moveCamera(CameraOptions(location.position, zoom = 15.0))
+            tomTomMap.moveCamera(CameraOptions(location.position, zoom = 10.0))
             locationProvider.removeOnLocationUpdateListener(onLocationUpdateListener)
+            navigationBinding.progressBarMapLoading.postDelayed({
+                navigationBinding.progressBarMapLoading.visibility = View.GONE
+            }, 2000)
         }
         locationProvider.addOnLocationUpdateListener(onLocationUpdateListener)
+
     }
 
     /**
@@ -513,6 +559,7 @@ class NavigationActivity : AppCompatActivity() {
 
         override fun onStopped() {
             stopNavigation()
+
         }
     }
 
@@ -561,21 +608,19 @@ class NavigationActivity : AppCompatActivity() {
      * Don’t forget to reset any map settings that were changed, such as camera tracking, location marker, and map padding.
      */
     private fun stopNavigation() {
-        navigationFragment.stopNavigation()
-        mapFragment.currentLocationButton.visibilityPolicy =
-            VisibilityPolicy.InvisibleWhenRecentered
-        tomTomMap.removeCameraChangeListener(cameraChangeListener)
-        tomTomMap.cameraTrackingMode = CameraTrackingMode.None
-        tomTomMap.enableLocationMarker(LocationMarkerOptions(LocationMarkerOptions.Type.Pointer))
-        resetMapPadding()
-        navigationFragment.removeNavigationListener(navigationListener)
-        tomTomNavigation.removeProgressUpdatedListener(progressUpdatedListener)
-        tomTomNavigation.removeActiveRouteChangedListener(activeRouteChangedListener)
-        clearMap()
-        initLocationProvider()
-        tomTomMap.setLocationProvider(locationProvider)
-        locationProvider.enable()
-        showUserLocation()
+        if (::navigationFragment.isInitialized) {
+            navigationFragment.stopNavigation()
+            mapFragment.currentLocationButton.visibilityPolicy =
+                VisibilityPolicy.InvisibleWhenRecentered
+            tomTomMap.removeCameraChangeListener(cameraChangeListener)
+            tomTomMap.cameraTrackingMode = CameraTrackingMode.None
+            tomTomMap.enableLocationMarker(LocationMarkerOptions(LocationMarkerOptions.Type.Pointer))
+            resetMapPadding()
+            navigationFragment.removeNavigationListener(navigationListener)
+            tomTomNavigation.removeProgressUpdatedListener(progressUpdatedListener)
+            tomTomNavigation.removeActiveRouteChangedListener(activeRouteChangedListener)
+        }
+
     }
 
     /**
@@ -699,6 +744,47 @@ class NavigationActivity : AppCompatActivity() {
         navigationTileStore.close()
         locationProvider.close()
         webSocket.close(1000, "Activity Destroyed")
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val intentFilter = IntentFilter("com.example.poconnbandtomtom.START_NAVIGATION")
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // New overload: registerReceiver(receiver, filter, flags)
+            registerReceiver(
+                navigationReceiver,
+                intentFilter,
+                Context.RECEIVER_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(navigationReceiver, intentFilter)
+        }
+    }
+
+    private val navigationReceiver: BroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val isRoute = intent?.getBooleanExtra("isRoute", false) ?: false
+            val routeIndex = intent?.getIntExtra("route", -1) ?: -1
+            println("🔥 Broadcast received: isRoute=$isRoute, routeIndex=$routeIndex")
+
+            if (isRoute && routeIndex >= 0 && routesList.isNotEmpty()) {
+                navigationBinding.spinnerRoutes.setSelection(routeIndex)
+                navigationBinding.btnDelivered.visibility = View.INVISIBLE
+                navigationBinding.btnStartNavigation.visibility = View.VISIBLE
+                navigationBinding.btnClearRoutes.visibility = View.VISIBLE
+            }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        try {
+            unregisterReceiver(navigationReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Receiver was not registered — safe to ignore
+        }
     }
 
     companion object {
